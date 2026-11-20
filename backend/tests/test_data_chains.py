@@ -26,8 +26,13 @@ from app.services.retention_calc import calculate_retention, get_retention_resul
 from app.services.lifetime_value import predict_ltv, get_ltv_result, ltv_with_retention
 from app.services.tag_snapshot import create_snapshot, get_snapshot
 from app.services.behavior_heatmap import generate_heatmap, get_heatmap
-from app.services.profile_card import build_profile_card, get_profile_result
+from app.services.profile_card import (
+    build_profile_card,
+    get_profile_result,
+    get_profile_tag_detail,
+)
 from app.services.tag_drill import drill_tag, get_drill_result
+from app.services.tag_compute import recompute_tag, select_compute_task
 
 
 class TestDataChains(unittest.TestCase):
@@ -35,10 +40,7 @@ class TestDataChains(unittest.TestCase):
 
     def setUp(self) -> None:
         """重置store状态。"""
-        # 清空产物缓存
-        store._artifacts.clear()
-        store._compute_cache.clear()
-        store._snapshots.clear()
+        store.reset()
 
     # ========== 链路1: 属性字典 → 标签定义 → 标签计算 ==========
     def test_chain_attr_to_tag_compute(self) -> None:
@@ -235,8 +237,86 @@ class TestDataChains(unittest.TestCase):
             from app.services.funnel_analyze import compare_funnels
             compare_funnels("FN-001", "FN-NONEXIST")
 
-    # ========== 额外测试：数据产物仓库 ==========
-    def test_artifact_storage_and_retrieval(self) -> None:
+    # ========== 画像卡片：多任务匹配与差量口径 ==========
+    def test_profile_card_one_task_per_tag(self) -> None:
+        """同一标签挂了全量+差量任务时，卡片里只出现一条且取全量口径。"""
+        profile = build_profile_card("PC-001")
+        tag_ids = [item["tag_id"] for item in profile["display_tags"]]
+        self.assertEqual(tag_ids.count("TAG-001"), 1)
+        self.assertEqual(tag_ids, ["TAG-001", "TAG-002", "TAG-003"])
+
+        tag_001 = next(item for item in profile["display_tags"] if item["tag_id"] == "TAG-001")
+        self.assertEqual(tag_001["task_id"], "TC-001")
+        self.assertEqual(tag_001["compute_scope"], "all")
+        self.assertTrue(tag_001["is_full_coverage"])
+        self.assertIsNotNone(tag_001["coverage_count"])
+
+        # 选中任务应优先全量而不是最新的差量任务
+        selected = select_compute_task("TAG-001")
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected["task_id"], "TC-001")
+
+    def test_profile_card_delta_not_counted_as_coverage(self) -> None:
+        """差量重算只产出变化量，不能进入卡片覆盖总量。"""
+        build_profile_card("PC-001")
+        recompute_tag("TC-001", "delta")
+
+        profile = build_profile_card("PC-001")
+        tag_001 = next(item for item in profile["display_tags"] if item["tag_id"] == "TAG-001")
+        self.assertEqual(tag_001["compute_scope"], "delta")
+        self.assertFalse(tag_001["is_full_coverage"])
+        self.assertIsNone(tag_001["coverage_count"])
+        self.assertGreater(tag_001["result_count"], 0)
+        # 没有可用的全量结果时总量为空，而不是把差量当覆盖数
+        self.assertIsNone(profile["total_coverage"])
+
+    def test_profile_card_marks_pending_and_consumed_versions(self) -> None:
+        """一张卡片两个标签，一个已算完一个仍在计算：标出采用的输入与未就绪标签。"""
+        profile = build_profile_card("PC-001")
+        self.assertIn("TAG-003", profile["pending_tags"])
+        self.assertNotIn("TAG-001", profile["pending_tags"])
+
+        inputs = profile["input_versions"]
+        self.assertEqual(inputs["TAG-001"]["task_id"], "TC-001")
+        self.assertEqual(inputs["TAG-001"]["compute_version"], "TC-001-v1")
+        self.assertTrue(inputs["TAG-001"]["ready"])
+        self.assertEqual(inputs["TAG-003"]["task_id"], "TC-003")
+        self.assertFalse(inputs["TAG-003"]["ready"])
+
+    def test_profile_card_recompute_invalidates_and_reuses_new_version(self) -> None:
+        """重算后历史产物失效，再次进入卡片能核对到新版本。"""
+        first = build_profile_card("PC-001")
+        self.assertEqual(first["input_versions"]["TAG-001"]["compute_version"], "TC-001-v1")
+
+        recompute_tag("TC-001")
+        # 旧卡片产物被失效，不会继续回查历史覆盖值
+        self.assertIsNone(store.get_artifact("profile_card", "PC-001"))
+        self.assertIsNone(store.get_artifact("profile_card_tag_detail", "PC-001"))
+
+        second = build_profile_card("PC-001")
+        self.assertEqual(second["input_versions"]["TAG-001"]["compute_version"], "TC-001-v2")
+
+        # 回查返回最近一次刷新产物，总量与明细一致
+        back = get_profile_result("PC-001")
+        self.assertEqual(back["total_coverage"], second["total_coverage"])
+        detail = get_profile_tag_detail("PC-001")
+        self.assertEqual(detail["input_versions"]["TAG-001"]["compute_version"], "TC-001-v2")
+        self.assertEqual(detail["total_coverage"], second["total_coverage"])
+
+    def test_profile_card_detail_references_task_version(self) -> None:
+        """画像标签明细字段引用所消费的任务版本。"""
+        build_profile_card("PC-001")
+        detail = get_profile_tag_detail("PC-001")
+        self.assertEqual(len(detail["tags"]), 3)
+        for row in detail["tags"]:
+            self.assertTrue(row["task_id"])
+            self.assertTrue(row["compute_version"])
+            self.assertEqual(row["card_id"], "PC-001")
+        tag_002 = next(row for row in detail["tags"] if row["tag_id"] == "TAG-002")
+        self.assertFalse(tag_002["is_full_coverage"])
+        self.assertIsNone(tag_002["coverage_count"])
+
+    # ========== 额外测试：数据产物仓库 ==========    def test_artifact_storage_and_retrieval(self) -> None:
         """测试数据产物存储和查询。"""
         store.set_artifact("test", "key1", {"data": "value1"})
         artifact = store.get_artifact("test", "key1")
@@ -262,8 +342,7 @@ class TestBusinessLogic(unittest.TestCase):
     """测试核心业务逻辑正确性。"""
 
     def setUp(self) -> None:
-        store._artifacts.clear()
-        store._compute_cache.clear()
+        store.reset()
 
     def test_tag_compute_logic_eval(self) -> None:
         """测试标签计算逻辑求值。"""

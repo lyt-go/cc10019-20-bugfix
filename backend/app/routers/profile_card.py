@@ -6,7 +6,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from app.schemas import ActionPayload, ActionResult
-from app.services.profile_card import build_profile_card, get_profile_result
+from app.services.profile_card import (
+    build_profile_card,
+    get_profile_result,
+    get_profile_tag_detail,
+)
 from app.store import store
 
 router = APIRouter(prefix="/api/profile-card", tags=["profile_card"])
@@ -36,6 +40,7 @@ def detail(entry_id: int) -> dict[str, Any]:
 
 @router.post("/{card_id}/build")
 def build(card_id: str) -> ActionResult:
+    """刷新画像卡片：按标签当前就绪结果重算并记录本次采用的输入版本。"""
     try:
         result = build_profile_card(card_id)
         return ActionResult(ok=True, message="Built", entry=result)
@@ -45,7 +50,17 @@ def build(card_id: str) -> ActionResult:
 
 @router.get("/{card_id}/result")
 def result(card_id: str) -> dict[str, Any]:
+    """回查已确认的卡片：返回最近一次刷新产物，总量与当时的标签数据一致。"""
     res = get_profile_result(card_id)
+    if res is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    return res
+
+
+@router.get("/{card_id}/tag-detail")
+def tag_detail(card_id: str) -> dict[str, Any]:
+    """画像标签明细：逐标签引用所消费的任务版本，便于核对。"""
+    res = get_profile_tag_detail(card_id)
     if res is None:
         raise HTTPException(status_code=404, detail="Result not found")
     return res

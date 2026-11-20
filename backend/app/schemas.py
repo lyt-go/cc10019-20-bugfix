@@ -397,6 +397,61 @@ class TagComputeResult(BaseModel):
     user_tag_values: list[dict[str, Any]] = Field(default_factory=list)
     output_partition: str = ""
     compute_time_ms: int = 0
+    compute_version: str = Field("", description="本次结果对应的任务版本，下游消费可回查")
+    task_version: str = Field("", description="任务版本（与 compute_version 同源）")
+    is_full_coverage: bool = Field(True, description="是否构成人群完整覆盖")
+    coverage_count: int | None = Field(None, description="人群覆盖人数；差量/增量结果为空")
+    computed_at: str = Field("", description="计算完成时间")
+
+
+class TagConsumption(BaseModel):
+    """下游消费某标签结果时的输入版本说明。"""
+
+    tag_id: str
+    tag_name: str = ""
+    task_id: str = Field("", description="实际消费的任务编号")
+    compute_version: str = Field("", description="实际消费的任务版本")
+    compute_scope: str = Field("", description="任务计算范围：all/incremental/delta")
+    is_full_coverage: bool = Field(True, description="是否构成人群完整覆盖")
+    ready: bool = Field(True, description="该标签结果本次是否已就绪")
+    coverage_count: int | None = Field(None, description="人群覆盖人数，仅全量结果有值")
+    result_count: int = Field(0, description="结果行数（差量/增量时为变化量）")
+    status: str = Field("", description="就绪/计算中/未产出/历史版本等状态说明")
+
+
+class ProfileCardTagDetail(BaseModel):
+    """画像标签明细：每张卡片每个标签实际引用的任务版本与覆盖口径。"""
+
+    card_id: str
+    card_name: str
+    tag_id: str
+    tag_name: str = ""
+    task_id: str = ""
+    compute_version: str = ""
+    compute_scope: str = ""
+    is_full_coverage: bool = True
+    ready: bool = True
+    coverage_count: int | None = None
+    result_count: int = 0
+    status: str = ""
+    built_at: str = ""
+
+
+class ProfileCardResult(BaseModel):
+    """画像卡片结果产物。"""
+
+    card_id: str
+    card_name: str
+    display_tags: list[dict[str, Any]] = Field(default_factory=list)
+    segment_info: dict[str, Any] | None = None
+    data_source: str = ""
+    display_style: str = ""
+    total_coverage: int | None = Field(None, description="卡片展示标签的人群覆盖总量（按全量结果去重）")
+    pending_tags: list[str] = Field(default_factory=list, description="本次刷新仍未就绪的标签")
+    input_versions: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, description="本次实际采用的输入：标签 -> 任务/版本"
+    )
+    built_at: str = ""
 
 
 class SegmentResult(BaseModel):

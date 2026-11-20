@@ -29,6 +29,17 @@ class Store:
     def module_names(self) -> list[str]:
         return sorted(self._tables)
 
+    def reset(self) -> None:
+        """把业务表和运行期产物恢复成种子状态（测试与本地重置用）。"""
+        self._tables = {name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()}
+        self._artifacts.clear()
+        self._snapshots.clear()
+        self._compute_cache.clear()
+        self._next_ids = {
+            name: max((int(row.get("id", 0)) for row in self._tables[name]), default=0) + 1
+            for name in self._tables
+        }
+
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
 
@@ -108,6 +119,22 @@ class Store:
     def get_artifact_keys(self, artifact_type: str) -> list[str]:
         """获取某类型产物的所有键。"""
         return list(self._artifacts.get(artifact_type, {}).keys())
+
+    def delete_artifact(self, artifact_type: str, artifact_id: str) -> bool:
+        """删除某个数据产物（用于结果失效后避免继续读到旧值）。"""
+        bucket = self._artifacts.get(artifact_type, {})
+        if artifact_id not in bucket:
+            return False
+        del bucket[artifact_id]
+        return True
+
+    def invalidate_artifacts(self, artifact_type: str, predicate: Any) -> int:
+        """按条件批量失效某类产物，返回删除数量。"""
+        bucket = self._artifacts.get(artifact_type, {})
+        keys = [key for key, value in bucket.items() if predicate(value)]
+        for key in keys:
+            del bucket[key]
+        return len(keys)
 
     # ========== 快照管理 ==========
     def add_snapshot(self, snapshot_type: str, data: dict[str, Any]) -> None:

@@ -6,7 +6,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 
 from app.schemas import ActionPayload, ActionResult
-from app.services.tag_compute import compute_tag, get_compute_result, list_compute_results, recompute_tag
+from app.services.tag_compute import (
+    compute_tag,
+    get_compute_result,
+    list_compute_results,
+    recompute_tag,
+    select_compute_task,
+    task_version,
+)
 from app.store import store
 
 router = APIRouter(prefix="/api/tag-compute", tags=["tag_compute"])
@@ -49,6 +56,22 @@ def result(task_id: str) -> dict[str, Any]:
     if res is None:
         raise HTTPException(status_code=404, detail="Result not found")
     return res
+
+
+@router.get("/by-tag/{tag_id}/result")
+def result_by_tag(tag_id: str) -> dict[str, Any]:
+    """按标签读取结果：同一标签只返回唯一被选中的任务结果。"""
+    task = select_compute_task(tag_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Result not found")
+    res = get_compute_result(task["task_id"])
+    if res is None:
+        raise HTTPException(status_code=404, detail="Result not ready")
+    return {
+        **res,
+        "selected_task_id": task["task_id"],
+        "task_version": task_version(task),
+    }
 
 
 @router.get("/artifacts/all")

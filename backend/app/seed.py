@@ -137,6 +137,8 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
         },
     ],
     # ========== 标签计算任务 ==========
+    # 同一标签可以由多个任务覆盖（全量/增量/差量），下游按"已完成且全量、版本最新"
+    # 选取唯一任务消费；差量任务只产出变化量，不能当作人群完整覆盖数。
     "tag_compute": [
         {
             "id": 1,
@@ -152,6 +154,9 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
             "parallelism": 4,
             "exec_state": "success",
             "result_count": 12500,
+            "compute_version": "TC-001-v1",
+            "compute_revision": 1,
+            "computed_at": "2026-11-15T02:00:00Z",
             "error_log": "",
         },
         {
@@ -168,6 +173,9 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
             "parallelism": 2,
             "exec_state": "success",
             "result_count": 3200,
+            "compute_version": "TC-002-v1",
+            "compute_revision": 1,
+            "computed_at": "2026-11-15T02:05:00Z",
             "error_log": "",
         },
         {
@@ -184,6 +192,9 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
             "parallelism": 4,
             "exec_state": "running",
             "result_count": 0,
+            "compute_version": "TC-003-v1",
+            "compute_revision": 0,
+            "computed_at": "",
             "error_log": "",
         },
         {
@@ -200,7 +211,29 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
             "parallelism": 2,
             "exec_state": "failed",
             "result_count": 0,
+            "compute_version": "TC-004-v1",
+            "compute_revision": 0,
+            "computed_at": "",
             "error_log": "属性ATTR-002缺失部分用户数据",
+        },
+        {
+            "id": 5,
+            "status": "已完成",
+            "pending": False,
+            "abnormal": False,
+            "task_id": "TC-005",
+            "tag_id": "TAG-001",
+            "compute_scope": "delta",
+            "engine": "sql",
+            "input_partitions": ["user_events_20261116_delta"],
+            "output_partition": "tag_result_20261116",
+            "parallelism": 2,
+            "exec_state": "success",
+            "result_count": 420,
+            "compute_version": "TC-005-v1",
+            "compute_revision": 1,
+            "computed_at": "2026-11-16T02:00:00Z",
+            "error_log": "",
         },
     ],
     # ========== 画像卡片 ==========

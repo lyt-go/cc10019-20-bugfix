@@ -5,6 +5,7 @@ from typing import Any
 
 from app.store import store
 from app.schemas import SegmentResult
+from app.services.tag_compute import ensure_compute_result, select_compute_task
 
 
 def compute_segment(segment_id: str) -> SegmentResult:
@@ -15,8 +16,18 @@ def compute_segment(segment_id: str) -> SegmentResult:
 
     tier_rules = segment.get("tier_rules", [])
 
-    # 获取标签计算结果
-    tag_results = store.list_artifacts("tag_compute")
+    # 获取标签计算结果：每个标签只取唯一选中的任务结果
+    tag_results: dict[str, dict[str, Any]] = {}
+    for rule in tier_rules:
+        tag_id = rule.get("tag", "")
+        if tag_id in tag_results:
+            continue
+        task = select_compute_task(tag_id)
+        if task is None:
+            continue
+        result = ensure_compute_result(task["task_id"])
+        if result:
+            tag_results[tag_id] = result
 
     # 模拟用户分层
     user_count = segment.get("size_estimate", 1000)
@@ -25,9 +36,9 @@ def compute_segment(segment_id: str) -> SegmentResult:
     # 基于分层规则分配
     for rule in tier_rules:
         tag_id = rule.get("tag", "")
-        matched = sum(1 for r in tag_results if r.get("tag_id") == tag_id)
+        matched = 1 if tag_id in tag_results else 0
         if matched > 0:
-            tier_distribution[tag_id] = matched
+            tier_distribution[tag_id] = tag_results[tag_id].get("result_count", 0)
         else:
             tier_distribution[tag_id] = user_count // max(len(tier_rules), 1)
 

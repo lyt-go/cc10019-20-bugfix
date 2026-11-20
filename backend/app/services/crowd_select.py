@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.store import store
+from app.services.tag_compute import ensure_compute_result, select_compute_task
 
 
 def select_crowd(condition_id: str) -> dict[str, Any]:
@@ -15,20 +16,30 @@ def select_crowd(condition_id: str) -> dict[str, Any]:
     tag_combination = condition.get("tag_combination", [])
     logic_expr = condition["logic_expr"]
 
-    # 获取标签计算结果
-    tag_results = store.list_artifacts("tag_compute")
+    # 获取标签计算结果：每个标签只取唯一选中的任务，差量条目不参与圈选基数
+    tag_results: dict[str, dict[str, Any]] = {}
+    for combo in tag_combination:
+        tag_id = combo.get("tag_id", "")
+        if tag_id in tag_results:
+            continue
+        task = select_compute_task(tag_id)
+        if task is None:
+            continue
+        result = ensure_compute_result(task["task_id"])
+        if result:
+            tag_results[tag_id] = result
 
     # 模拟圈选结果
     matched_users = set()
     for combo in tag_combination:
         tag_id = combo.get("tag_id", "")
-        # 查找对应标签计算结果
-        for result in tag_results:
-            if result.get("tag_id") == tag_id:
-                users = result.get("user_tag_values", [])
-                for u in users:
-                    if u.get("tag_value") == combo.get("value") or u.get("tag_value") == True:
-                        matched_users.add(u.get("user_id"))
+        result = tag_results.get(tag_id)
+        if result is None:
+            continue
+        users = result.get("user_tag_values", [])
+        for u in users:
+            if u.get("tag_value") == combo.get("value") or u.get("tag_value") == True:
+                matched_users.add(u.get("user_id"))
 
     # 如果无匹配，用默认值
     if not matched_users:

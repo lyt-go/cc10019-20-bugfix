@@ -4,6 +4,25 @@ from __future__ import annotations
 from typing import Any
 
 from app.store import store
+from app.services.tag_compute import ensure_compute_result, select_compute_task
+
+
+def _selected_compute_results() -> list[dict[str, Any]]:
+    """每个标签只取唯一选中的任务结果，避免同一标签的差量结果重复计入。"""
+    results: list[dict[str, Any]] = []
+    seen_tags: set[str] = set()
+    for tag in store.rows("tag_define"):
+        tag_id = tag["tag_id"]
+        if tag_id in seen_tags:
+            continue
+        seen_tags.add(tag_id)
+        task = select_compute_task(tag_id)
+        if task is None:
+            continue
+        result = ensure_compute_result(task["task_id"])
+        if result:
+            results.append(result)
+    return results
 
 
 def create_snapshot(snapshot_id: str) -> dict[str, Any]:
@@ -16,13 +35,15 @@ def create_snapshot(snapshot_id: str) -> dict[str, Any]:
     tags = store.rows("tag_define")
     # 获取所有分群
     segments = store.rows("user_segment")
-    # 获取标签计算结果
-    compute_results = store.list_artifacts("tag_compute")
+    # 获取标签计算结果（每个标签唯一任务，差量不计入覆盖）
+    compute_results = _selected_compute_results()
 
-    # 计算用户基数（从标签计算结果汇总）
+    # 计算用户基数：只汇总全量覆盖数，差量/增量不能当作人群完整覆盖
     total_users = 0
     for result in compute_results:
-        total_users = max(total_users, result.get("result_count", 0))
+        coverage = result.get("coverage_count")
+        if result.get("is_full_coverage") and coverage is not None:
+            total_users = max(total_users, int(coverage))
     if total_users == 0:
         total_users = 50000  # 默认值
 
@@ -41,6 +62,9 @@ def create_snapshot(snapshot_id: str) -> dict[str, Any]:
                 "tag_id": r.get("tag_id"),
                 "result_count": r.get("result_count"),
                 "compute_scope": r.get("compute_scope"),
+                "compute_version": r.get("compute_version"),
+                "is_full_coverage": r.get("is_full_coverage", True),
+                "coverage_count": r.get("coverage_count"),
             }
             for r in compute_results
         ],
